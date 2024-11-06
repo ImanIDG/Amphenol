@@ -5,10 +5,22 @@
 #define sensorBaud 9600
 
 #include "SoftwareSerial.h"   //arduino software serial
+
+#include <MQUnifiedsensor.h>
+
+//Definitions
+#define placa "Arduino UNO"
+#define Voltage_Resolution 5
+#define pin A10 //Analog input 10 of your arduino GPIO04
+#define type "MQ-6" //MQ6
+#define ADC_Bit_Resolution 10 // For arduino UNO/MEGA/NANO
+#define RatioMQ6CleanAir 10   //RS / R0 = 10 ppm 
+MQUnifiedsensor MQ6(placa, Voltage_Resolution, ADC_Bit_Resolution, pin, type);
+
 #define sleepPin 4 //D4, Connector Pin 3, 04L Pin 10 Sleep
-#define Rx_Pin  6  //D5, Connector Pin 4, 04L Pin 9 Tx
-#define Tx_Pin  5  //D6, Connector Pin 5, 04L Pin 7 Rx
-SoftwareSerial mySerial(Rx_Pin, Tx_Pin); // RX, TX               // Declare serial
+//#define Rx_Pin  6  //D5, Connector Pin 4, 04L Pin 9 Tx
+//#define Tx_Pin  5  //D6, Connector Pin 5, 04L Pin 7 Rx
+//SoftwareSerial Serial2(Rx_Pin, Tx_Pin); // RX, TX               // Declare serial
 
 byte data[32] ;                   //create an array to store the response
 unsigned long sampleTime;         // variable to monitor time of each sample start
@@ -23,7 +35,7 @@ void setup()
   pinMode(sleepPin, OUTPUT);
 
   Serial.begin(9600); //Opens the main serial port over USB
-  mySerial.begin(sensorBaud);  //baud rate, configuration
+  Serial2.begin(sensorBaud);  //baud rate, configuration
   //opens sensor serial with baud rate, configuration, pins are preset
 
   Serial.println(F("Amphenol Advanced Sensors"));
@@ -34,7 +46,27 @@ void setup()
   Serial.println(F("Advanced Sensors"));
   Serial.println(F("Amphenol"));
   Serial.println(F("PM1 Standard Smoke (µg/m³), PM2.5 Standard Smoke (µg/m³), PM10 Standard Smoke (µg/m³)"));
-
+  
+  //Set math model to calculate the PPM concentration and the value of constants
+  MQ6.setRegressionMethod(1); //_PPM =  a*ratio^b
+  MQ6.setA(2127.2); MQ6.setB(-2.526); // Configure the equation to to calculate CH4 concentration
+  MQ6.init();
+  
+  Serial.print("Calibrating please wait.");
+  float calcR0 = 0;
+  for(int i = 1; i<=10; i ++)
+  {
+    MQ6.update(); // Update data, the arduino will read the voltage from the analog pin
+    calcR0 += MQ6.calibrate(RatioMQ6CleanAir);
+    Serial.print(".");
+  }
+  MQ6.setR0(calcR0/10);
+  Serial.println("  done!.");
+  
+  if(isinf(calcR0)) {Serial.println("Warning: Conection issue, R0 is infinite (Open circuit detected) please check your wiring and supply"); while(1);}
+  if(calcR0 == 0){Serial.println("Warning: Conection issue found, R0 is zero (Analog pin shorts to ground) please check your wiring and supply"); while(1);}
+  /*****************************  MQ CAlibration ********************************************/ 
+  MQ6.serialDebug(true);
   sampleTime = millis();
 }
 
@@ -55,7 +87,10 @@ void loop()
       Serial.print(F("No data"));
     }
     Serial.println();
-
+    
+    MQ6.update(); // Update data, the arduino will read the voltage from the analog pin
+    MQ6.readSensor(); // Sensor will read PPM concentration using the model, a and b values set previously or from the setup
+    MQ6.serialDebug(); // Will print the table on the serial port
   }
 }
 
@@ -66,7 +101,7 @@ void loop()
 bool GetSerialData() {  //get lots - post sort method
   byte message[64];
   int CRC = 0;
-  mySerial.readBytes(message, 64);   //read 64 streamed bytes
+  Serial2.readBytes(message, 64);   //read 64 streamed bytes
 
   for ( byte i = 0 ; i < 32 ; i++ ) {  //look for ox42, 0x4D sequence and load data from stream
     if ( message[i] == 0x42 && message[i + 1] == 0x4D ) {
@@ -97,15 +132,15 @@ unsigned int getCS(byte len)     // Compute the checksum
 
 void printSerialNumber() {
   //{0x20, 0x0F, 0x00, 0x00, 0x00, 0x00, 0x53, 0x7A};  message to call serial number
-  mySerial.write((byte)0x20);
-  mySerial.write((byte)0x0F);
-  mySerial.write((byte)0x00);
-  mySerial.write((byte)0x00);
-  mySerial.write((byte)0x00);
-  mySerial.write((byte)0x00);
-  mySerial.write((byte)0x53);
-  mySerial.write((byte)0x7A);
-  mySerial.readBytes(data, 20);
+  Serial2.write((byte)0x20);
+  Serial2.write((byte)0x0F);
+  Serial2.write((byte)0x00);
+  Serial2.write((byte)0x00);
+  Serial2.write((byte)0x00);
+  Serial2.write((byte)0x00);
+  Serial2.write((byte)0x53);
+  Serial2.write((byte)0x7A);
+  Serial2.readBytes(data, 20);
 
 Serial.print(F("Serial Number: "));
   for (int i = 0; i < 20; i++) {
